@@ -5,6 +5,11 @@
 - Standardize invalid project ID error surfaced by CLI to a clear message: "Project '<value>' not found". Consider mapping known GraphQL error cases in the API client (pkg/api/client.go) or at command error sites for create/update.
 - Add basic UUID format validation for the `--project` flag (accept special `unassigned`).
 
+- Include project name in archive success output (CLI). Options: return Project from `ArchiveProject` or fetch after archive. [Resolved 2025-11-06]
+- Add tests for project create/archive flows and validation error paths (JSON/plaintext). [Resolved 2025-11-06]
+- Verify/fix `GetTeam` GraphQL selector (key vs id) for team resolution. [Resolved 2025-11-06]
+- Validate `--target-date` (YYYY-MM-DD) before API call. [Resolved 2025-11-06]
+
 Date: 2025-11-06
 Author: John
 Epic ID: 1
