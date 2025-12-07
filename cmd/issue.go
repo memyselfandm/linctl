@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"regexp"
+	"strings"
 
 	"github.com/dorkitude/linctl/pkg/api"
 	"github.com/dorkitude/linctl/pkg/auth"
@@ -21,9 +21,13 @@ var uuidRegexp = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{
 func isValidUUID(s string) bool { return uuidRegexp.MatchString(s) }
 
 func isProjectNotFoundErr(err error) bool {
-	if err == nil { return false }
+	if err == nil {
+		return false
+	}
 	e := strings.ToLower(err.Error())
-	if !strings.Contains(e, "not found") { return false }
+	if !strings.Contains(e, "not found") {
+		return false
+	}
 	return strings.Contains(e, "project") || strings.Contains(e, "projectid")
 }
 
