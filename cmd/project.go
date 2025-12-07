@@ -728,11 +728,150 @@ Examples:
 	},
 }
 
+var projectUpdateCmd = &cobra.Command{
+	Use:   "update [project-id]",
+	Short: "Update a project",
+	Long: `Update an existing project's properties.
+
+Examples:
+  linctl project update abc123 --name "New Name"
+  linctl project update abc123 --description "Updated description"
+  linctl project update abc123 --state started
+  linctl project update abc123 --lead john@company.com
+  linctl project update abc123 --target-date 2024-12-31
+  linctl project update abc123 --state completed`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+		projectID := args[0]
+
+		authHeader, err := auth.GetAuthHeader()
+		if err != nil {
+			output.Error("Not authenticated. Run 'linctl auth' first.", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		client := api.NewClient(authHeader)
+
+		// Build update input
+		input := make(map[string]interface{})
+
+		if cmd.Flags().Changed("name") {
+			name, _ := cmd.Flags().GetString("name")
+			input["name"] = name
+		}
+
+		if cmd.Flags().Changed("description") {
+			description, _ := cmd.Flags().GetString("description")
+			input["description"] = description
+		}
+
+		if cmd.Flags().Changed("state") {
+			state, _ := cmd.Flags().GetString("state")
+			validStates := []string{"planned", "started", "paused", "completed", "canceled"}
+			isValid := false
+			for _, vs := range validStates {
+				if strings.EqualFold(state, vs) {
+					input["state"] = strings.ToLower(state)
+					isValid = true
+					break
+				}
+			}
+			if !isValid {
+				output.Error(fmt.Sprintf("Invalid state '%s'. Valid states: %s", state, strings.Join(validStates, ", ")), plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
+
+		if cmd.Flags().Changed("lead") {
+			leadValue, _ := cmd.Flags().GetString("lead")
+			switch strings.ToLower(leadValue) {
+			case "none", "unassigned", "":
+				input["leadId"] = nil
+			case "me":
+				viewer, err := client.GetViewer(context.Background())
+				if err != nil {
+					output.Error(fmt.Sprintf("Failed to get current user: %v", err), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				input["leadId"] = viewer.ID
+			default:
+				users, err := client.GetUsers(context.Background(), 100, "", "")
+				if err != nil {
+					output.Error(fmt.Sprintf("Failed to get users: %v", err), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				var foundUser *api.User
+				for _, user := range users.Nodes {
+					if user.Email == leadValue || user.Name == leadValue {
+						foundUser = &user
+						break
+					}
+				}
+				if foundUser == nil {
+					output.Error(fmt.Sprintf("User not found: %s", leadValue), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				input["leadId"] = foundUser.ID
+			}
+		}
+
+		if cmd.Flags().Changed("start-date") {
+			startDate, _ := cmd.Flags().GetString("start-date")
+			if startDate == "" {
+				input["startDate"] = nil
+			} else {
+				input["startDate"] = startDate
+			}
+		}
+
+		if cmd.Flags().Changed("target-date") {
+			targetDate, _ := cmd.Flags().GetString("target-date")
+			if targetDate == "" {
+				input["targetDate"] = nil
+			} else {
+				input["targetDate"] = targetDate
+			}
+		}
+
+		if cmd.Flags().Changed("color") {
+			colorValue, _ := cmd.Flags().GetString("color")
+			input["color"] = colorValue
+		}
+
+		// Check if any updates were specified
+		if len(input) == 0 {
+			output.Error("No updates specified. Use flags to specify what to update.", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Update project
+		project, err := client.UpdateProject(context.Background(), projectID, input)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to update project: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Output
+		if jsonOut {
+			output.JSON(project)
+		} else if plaintext {
+			fmt.Printf("Updated project: %s\n", project.Name)
+		} else {
+			fmt.Printf("%s Updated project %s\n",
+				color.New(color.FgGreen).Sprint("✓"),
+				color.New(color.FgCyan, color.Bold).Sprint(project.Name))
+		}
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(projectCmd)
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectGetCmd)
 	projectCmd.AddCommand(projectCreateCmd)
+	projectCmd.AddCommand(projectUpdateCmd)
 
 	// List command flags
 	projectListCmd.Flags().StringP("team", "t", "", "Filter by team key")
@@ -753,4 +892,13 @@ func init() {
 	projectCreateCmd.Flags().String("color", "", "Project color (hex code)")
 	_ = projectCreateCmd.MarkFlagRequired("name")
 	_ = projectCreateCmd.MarkFlagRequired("team")
+
+	// Update command flags
+	projectUpdateCmd.Flags().String("name", "", "New project name")
+	projectUpdateCmd.Flags().StringP("description", "d", "", "New description")
+	projectUpdateCmd.Flags().StringP("state", "s", "", "State (planned, started, paused, completed, canceled)")
+	projectUpdateCmd.Flags().String("lead", "", "Project lead (email, name, 'me', or 'none' to remove)")
+	projectUpdateCmd.Flags().String("start-date", "", "Start date (YYYY-MM-DD, or empty to remove)")
+	projectUpdateCmd.Flags().String("target-date", "", "Target date (YYYY-MM-DD, or empty to remove)")
+	projectUpdateCmd.Flags().String("color", "", "Project color (hex code)")
 }
