@@ -1081,6 +1081,61 @@ func (c *Client) GetProject(ctx context.Context, id string) (*Project, error) {
 	return &response.Project, nil
 }
 
+// CreateProject creates a new project
+func (c *Client) CreateProject(ctx context.Context, input map[string]interface{}) (*Project, error) {
+	query := `
+		mutation CreateProject($input: ProjectCreateInput!) {
+			projectCreate(input: $input) {
+				success
+				project {
+					id
+					name
+					description
+					state
+					progress
+					startDate
+					targetDate
+					url
+					icon
+					color
+					createdAt
+					updatedAt
+					lead {
+						id
+						name
+						email
+					}
+					teams {
+						nodes {
+							id
+							key
+							name
+						}
+					}
+				}
+			}
+		}
+	`
+
+	variables := map[string]interface{}{
+		"input": input,
+	}
+
+	var response struct {
+		ProjectCreate struct {
+			Success bool    `json:"success"`
+			Project Project `json:"project"`
+		} `json:"projectCreate"`
+	}
+
+	err := c.Execute(ctx, query, variables, &response)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response.ProjectCreate.Project, nil
+}
+
 // UpdateIssue updates an issue's fields
 func (c *Client) UpdateIssue(ctx context.Context, id string, input map[string]interface{}) (*Issue, error) {
 	query := `

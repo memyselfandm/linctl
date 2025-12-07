@@ -582,10 +582,157 @@ var projectGetCmd = &cobra.Command{
 	},
 }
 
+var projectCreateCmd = &cobra.Command{
+	Use:     "create",
+	Aliases: []string{"new"},
+	Short:   "Create a new project",
+	Long: `Create a new project in Linear.
+
+Examples:
+  linctl project create --name "Q1 Release" --team ENG
+  linctl project create --name "Auth Overhaul" --team ENG --description "Rewrite authentication system"
+  linctl project create --name "Mobile App" --team ENG --lead me --start-date 2024-01-01 --target-date 2024-06-30
+  linctl project create --name "Bug Bash" --team ENG,QA --state started`,
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+
+		authHeader, err := auth.GetAuthHeader()
+		if err != nil {
+			output.Error("Not authenticated. Run 'linctl auth' first.", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		client := api.NewClient(authHeader)
+
+		// Get required flags
+		name, _ := cmd.Flags().GetString("name")
+		teamKeys, _ := cmd.Flags().GetStringSlice("team")
+
+		if name == "" {
+			output.Error("Project name is required (--name)", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		if len(teamKeys) == 0 {
+			output.Error("At least one team is required (--team)", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Build input
+		input := map[string]interface{}{
+			"name": name,
+		}
+
+		// Resolve team IDs
+		var teamIDs []string
+		for _, teamKey := range teamKeys {
+			team, err := client.GetTeam(context.Background(), teamKey)
+			if err != nil {
+				output.Error(fmt.Sprintf("Failed to find team '%s': %v", teamKey, err), plaintext, jsonOut)
+				os.Exit(1)
+			}
+			teamIDs = append(teamIDs, team.ID)
+		}
+		input["teamIds"] = teamIDs
+
+		// Optional fields
+		if cmd.Flags().Changed("description") {
+			description, _ := cmd.Flags().GetString("description")
+			input["description"] = description
+		}
+
+		if cmd.Flags().Changed("state") {
+			state, _ := cmd.Flags().GetString("state")
+			validStates := []string{"planned", "started", "paused", "completed", "canceled"}
+			isValid := false
+			for _, vs := range validStates {
+				if strings.EqualFold(state, vs) {
+					input["state"] = strings.ToLower(state)
+					isValid = true
+					break
+				}
+			}
+			if !isValid {
+				output.Error(fmt.Sprintf("Invalid state '%s'. Valid states: %s", state, strings.Join(validStates, ", ")), plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
+
+		if cmd.Flags().Changed("lead") {
+			leadValue, _ := cmd.Flags().GetString("lead")
+			if leadValue == "me" {
+				viewer, err := client.GetViewer(context.Background())
+				if err != nil {
+					output.Error(fmt.Sprintf("Failed to get current user: %v", err), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				input["leadId"] = viewer.ID
+			} else {
+				users, err := client.GetUsers(context.Background(), 100, "", "")
+				if err != nil {
+					output.Error(fmt.Sprintf("Failed to get users: %v", err), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				var foundUser *api.User
+				for _, user := range users.Nodes {
+					if user.Email == leadValue || user.Name == leadValue {
+						foundUser = &user
+						break
+					}
+				}
+				if foundUser == nil {
+					output.Error(fmt.Sprintf("User not found: %s", leadValue), plaintext, jsonOut)
+					os.Exit(1)
+				}
+				input["leadId"] = foundUser.ID
+			}
+		}
+
+		if cmd.Flags().Changed("start-date") {
+			startDate, _ := cmd.Flags().GetString("start-date")
+			input["startDate"] = startDate
+		}
+
+		if cmd.Flags().Changed("target-date") {
+			targetDate, _ := cmd.Flags().GetString("target-date")
+			input["targetDate"] = targetDate
+		}
+
+		if cmd.Flags().Changed("color") {
+			colorValue, _ := cmd.Flags().GetString("color")
+			input["color"] = colorValue
+		}
+
+		// Create project
+		project, err := client.CreateProject(context.Background(), input)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to create project: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Output
+		if jsonOut {
+			output.JSON(project)
+		} else if plaintext {
+			fmt.Printf("Created project: %s\n", project.Name)
+			fmt.Printf("ID: %s\n", project.ID)
+			fmt.Printf("URL: %s\n", constructProjectURL(project.ID, project.URL))
+		} else {
+			fmt.Printf("%s Created project %s\n",
+				color.New(color.FgGreen).Sprint("✓"),
+				color.New(color.FgCyan, color.Bold).Sprint(project.Name))
+			fmt.Printf("  ID: %s\n", project.ID)
+			fmt.Printf("  URL: %s\n", color.New(color.FgBlue, color.Underline).Sprint(constructProjectURL(project.ID, project.URL)))
+		}
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(projectCmd)
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectGetCmd)
+	projectCmd.AddCommand(projectCreateCmd)
 
 	// List command flags
 	projectListCmd.Flags().StringP("team", "t", "", "Filter by team key")
@@ -594,4 +741,16 @@ func init() {
 	projectListCmd.Flags().BoolP("include-completed", "c", false, "Include completed and canceled projects")
 	projectListCmd.Flags().StringP("sort", "o", "linear", "Sort order: linear (default), created, updated")
 	projectListCmd.Flags().StringP("newer-than", "n", "", "Show projects created after this time (default: 6_months_ago, use 'all_time' for no filter)")
+
+	// Create command flags
+	projectCreateCmd.Flags().String("name", "", "Project name (required)")
+	projectCreateCmd.Flags().StringSliceP("team", "t", []string{}, "Team key(s) (required, comma-separated for multiple)")
+	projectCreateCmd.Flags().StringP("description", "d", "", "Project description")
+	projectCreateCmd.Flags().StringP("state", "s", "", "Initial state (planned, started, paused)")
+	projectCreateCmd.Flags().String("lead", "", "Project lead (email, name, or 'me')")
+	projectCreateCmd.Flags().String("start-date", "", "Start date (YYYY-MM-DD)")
+	projectCreateCmd.Flags().String("target-date", "", "Target date (YYYY-MM-DD)")
+	projectCreateCmd.Flags().String("color", "", "Project color (hex code)")
+	_ = projectCreateCmd.MarkFlagRequired("name")
+	_ = projectCreateCmd.MarkFlagRequired("team")
 }
