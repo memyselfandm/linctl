@@ -964,6 +964,260 @@ Examples:
 	},
 }
 
+// Project update-post commands
+
+var projectUpdatePostCmd = &cobra.Command{
+	Use:   "update-post",
+	Short: "Manage project update posts",
+	Long:  `Create, list, and view project update posts.`,
+}
+
+var projectUpdatePostCreateCmd = &cobra.Command{
+	Use:   "create PROJECT-UUID",
+	Short: "Create a project update post",
+	Long: `Create a new update post for a project.
+
+The project UUID is required as the first argument.
+
+Examples:
+  linctl project update-post create PROJECT-UUID --body "Monthly update..."
+  linctl project update-post create PROJECT-UUID --body "Q1 progress" --health "onTrack"`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+
+		projectID := args[0]
+		body, _ := cmd.Flags().GetString("body")
+		health, _ := cmd.Flags().GetString("health")
+
+		// Validate body is provided
+		if body == "" {
+			output.Error("--body is required", plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Validate health if provided
+		if health != "" {
+			allowedHealth := []string{"onTrack", "atRisk", "offTrack"}
+			valid := false
+			for _, h := range allowedHealth {
+				if health == h {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				output.Error(fmt.Sprintf("Invalid health. Must be one of: %s", strings.Join(allowedHealth, ", ")), plaintext, jsonOut)
+				os.Exit(1)
+			}
+		}
+
+		// Get auth header
+		authHeader, err := auth.GetAuthHeader()
+		if err != nil {
+			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Create API client
+		client := api.NewClient(authHeader)
+
+		// Build input
+		input := map[string]interface{}{
+			"projectId": projectID,
+			"body":      body,
+		}
+		if health != "" {
+			input["health"] = health
+		}
+
+		// Create project update
+		update, err := client.CreateProjectUpdate(context.Background(), input)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to create project update: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		if jsonOut {
+			output.JSON(update)
+			return
+		}
+
+		if plaintext {
+			fmt.Println("✓ Project update created successfully")
+			fmt.Printf("ID: %s\n", update.ID)
+			fmt.Printf("Created: %s\n", update.CreatedAt.Format("2006-01-02 15:04:05"))
+		} else {
+			fmt.Println()
+			fmt.Printf("%s Project update created successfully\n", color.New(color.FgGreen).Sprint("✓"))
+			fmt.Println()
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("ID:"), update.ID)
+			if update.User != nil {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Author:"), update.User.Name)
+			}
+			if update.Health != "" {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Health:"), update.Health)
+			}
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Created:"), update.CreatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Println()
+		}
+	},
+}
+
+var projectUpdatePostListCmd = &cobra.Command{
+	Use:   "list PROJECT-UUID",
+	Short: "List project update posts",
+	Long: `List all update posts for a project.
+
+Examples:
+  linctl project update-post list PROJECT-UUID
+  linctl project update-post list PROJECT-UUID --json`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+
+		projectID := args[0]
+
+		// Get auth header
+		authHeader, err := auth.GetAuthHeader()
+		if err != nil {
+			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Create API client
+		client := api.NewClient(authHeader)
+
+		// List project updates
+		updates, err := client.ListProjectUpdates(context.Background(), projectID)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to list project updates: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		if len(updates.Nodes) == 0 {
+			if jsonOut {
+				output.JSON([]interface{}{})
+			} else {
+				output.Info("No project updates found", plaintext, jsonOut)
+			}
+			return
+		}
+
+		if jsonOut {
+			output.JSON(updates.Nodes)
+			return
+		}
+
+		// Table output
+		headers := []string{"ID", "Author", "Health", "Created", "Updated"}
+		rows := [][]string{}
+
+		for _, update := range updates.Nodes {
+			author := ""
+			if update.User != nil {
+				author = update.User.Name
+			}
+
+			health := update.Health
+			if health == "" {
+				health = "N/A"
+			}
+
+			created := update.CreatedAt.Format("2006-01-02")
+			updated := update.UpdatedAt.Format("2006-01-02")
+
+			rows = append(rows, []string{
+				update.ID,
+				author,
+				health,
+				created,
+				updated,
+			})
+		}
+
+		output.Table(output.TableData{Headers: headers, Rows: rows}, plaintext, jsonOut)
+	},
+}
+
+var projectUpdatePostGetCmd = &cobra.Command{
+	Use:   "get UPDATE-UUID",
+	Short: "Get a project update post",
+	Long: `Get details of a specific project update post.
+
+Examples:
+  linctl project update-post get UPDATE-UUID
+  linctl project update-post get UPDATE-UUID --json`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		plaintext := viper.GetBool("plaintext")
+		jsonOut := viper.GetBool("json")
+
+		updateID := args[0]
+
+		// Get auth header
+		authHeader, err := auth.GetAuthHeader()
+		if err != nil {
+			output.Error(fmt.Sprintf("Authentication failed: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		// Create API client
+		client := api.NewClient(authHeader)
+
+		// Get project update
+		update, err := client.GetProjectUpdate(context.Background(), updateID)
+		if err != nil {
+			output.Error(fmt.Sprintf("Failed to get project update: %v", err), plaintext, jsonOut)
+			os.Exit(1)
+		}
+
+		if jsonOut {
+			output.JSON(update)
+			return
+		}
+
+		// Format output
+		if plaintext {
+			fmt.Printf("ID: %s\n", update.ID)
+			if update.User != nil {
+				fmt.Printf("Author: %s (%s)\n", update.User.Name, update.User.Email)
+			}
+			if update.Health != "" {
+				fmt.Printf("Health: %s\n", update.Health)
+			}
+			fmt.Printf("Created: %s\n", update.CreatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("Updated: %s\n", update.UpdatedAt.Format("2006-01-02 15:04:05"))
+			if update.EditedAt != nil {
+				fmt.Printf("Edited: %s\n", update.EditedAt.Format("2006-01-02 15:04:05"))
+			}
+			fmt.Println()
+			fmt.Println("Body:")
+			fmt.Println(update.Body)
+		} else {
+			fmt.Println()
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("ID:"), update.ID)
+			if update.User != nil {
+				fmt.Printf("%s %s (%s)\n", color.New(color.Bold).Sprint("Author:"), update.User.Name, update.User.Email)
+			}
+			if update.Health != "" {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Health:"), update.Health)
+			}
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Created:"), update.CreatedAt.Format("2006-01-02 15:04:05"))
+			fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Updated:"), update.UpdatedAt.Format("2006-01-02 15:04:05"))
+			if update.EditedAt != nil {
+				fmt.Printf("%s %s\n", color.New(color.Bold).Sprint("Edited:"), update.EditedAt.Format("2006-01-02 15:04:05"))
+			}
+			fmt.Println()
+			fmt.Println(color.New(color.Bold).Sprint("Body:"))
+			fmt.Println(update.Body)
+			fmt.Println()
+		}
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(projectCmd)
 	projectCmd.AddCommand(projectListCmd)
@@ -971,6 +1225,12 @@ func init() {
 	projectCmd.AddCommand(projectCreateCmd)
 	projectCmd.AddCommand(projectUpdateCmd)
 	projectCmd.AddCommand(projectDeleteCmd)
+	projectCmd.AddCommand(projectUpdatePostCmd)
+
+	// Project update-post subcommands
+	projectUpdatePostCmd.AddCommand(projectUpdatePostCreateCmd)
+	projectUpdatePostCmd.AddCommand(projectUpdatePostListCmd)
+	projectUpdatePostCmd.AddCommand(projectUpdatePostGetCmd)
 
 	// List command flags
 	projectListCmd.Flags().StringP("team", "t", "", "Filter by team key")
@@ -1004,4 +1264,8 @@ func init() {
 	// Delete command flags
 	projectDeleteCmd.Flags().Bool("permanent", false, "Permanently delete (cannot be undone)")
 	projectDeleteCmd.Flags().BoolP("force", "f", false, "Skip confirmation prompt")
+
+	// Project update-post create flags
+	projectUpdatePostCreateCmd.Flags().String("body", "", "Update post body (required)")
+	projectUpdatePostCreateCmd.Flags().String("health", "", "Project health (onTrack|atRisk|offTrack)")
 }
